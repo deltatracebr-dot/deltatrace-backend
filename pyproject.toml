@@ -1,0 +1,18 @@
+[project]
+name = "deltatrace-backend"
+version = "0.1.0"
+description = "Delta Trace OSINT CORE backend"
+requires-python = ">=3.12"
+
+dependencies = [
+    "fastapi",
+    "uvicorn[standard]",
+    "pydantic[email]",
+    "python-jose[cryptography]",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "httpx",
+]
