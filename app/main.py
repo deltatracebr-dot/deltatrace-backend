@@ -13,22 +13,15 @@ app = FastAPI(
 )
 
 # -----------------------------------
-# Configuração de CORS (White-list)
+# Configuração de CORS (PERMISSIVE)
 # -----------------------------------
-# Precisamos listar EXPLICITAMENTE os domínios para permitir Credenciais
-origins = [
-    "http://localhost:3000",                       # Dev Local
-    "https://deltatrace-app.vercel.app",           # Frontend Vercel (Produção)
-    "https://deltatrace-backend.onrender.com",     # Próprio Backend
-    "https://deltatrace.com.br"                    # Seu site institucional (opcional)
-]
-
+# Permitir tudo para garantir conexão Vercel <-> Render
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=origins,  # Usa a lista específica, não "*"
+    allow_origins=["*"],  # Liberar todas as origens
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["*"],  # Liberar todos os métodos (GET, POST, OPTIONS)
+    allow_headers=["*"],  # Liberar todos os headers
 )
 
 # -----------------------------------
@@ -36,7 +29,7 @@ app.add_middleware(
 # -----------------------------------
 @app.get("/health")
 def health():
-    return {"status": "online", "env": "production"}
+    return {"status": "online", "env": "production", "cors": "open"}
 
 # -----------------------------------
 # Registro de Rotas
