@@ -1,103 +1,89 @@
-﻿from fastapi import APIRouter, HTTPException
-from neo4j import GraphDatabase
-import os
-from dotenv import load_dotenv
-
-load_dotenv()
+﻿from fastapi import APIRouter
+from app.common.driver import get_db
+import math
 
 router = APIRouter()
 
-# Configuração Neo4j
-URI = os.getenv("NEO4J_URI", "neo4j+s://9605d472.databases.neo4j.io")
-USER = os.getenv("NEO4J_USER", "neo4j")
-PASSWORD = os.getenv("NEO4J_PASSWORD")
-
-driver = GraphDatabase.driver(URI, auth=(USER, PASSWORD))
-
 @router.get("/case/{case_id}")
 def get_case_graph(case_id: str):
-    """
-    Retorna o JSON pronto para o React Flow:
-    - Nodes: O Caso (centro) e as Evidências (satélites)
-    - Edges: As linhas conectando eles
-    """
+    driver = get_db()
+    if not driver: return {"nodes": [], "edges": []}
+    
     query = """
     MATCH (c:Case {id: $case_id})
     OPTIONAL MATCH (c)-[r]->(e:Entity)
     RETURN c, collect(e) as entities
     """
-    
     with driver.session() as session:
         result = session.run(query, case_id=case_id).single()
     
-    if not result:
-        raise HTTPException(status_code=404, detail="Caso não encontrado")
+    if not result: return {"nodes": [], "edges": []}
 
     case_node = result["c"]
     entities = result["entities"]
-
+    
     nodes = []
     edges = []
-
-    # 1. Criar o Nó Central (O Caso)
+    
+    # Nó Central
     nodes.append({
         "id": case_node["id"],
-        "type": "input", # Destaca que é o pai
+        "type": "input",
         "data": { "label": f"📂 {case_node.get('title', 'Caso')}" },
-        "position": { "x": 400, "y": 300 }, # Centro da tela
-        "style": { 
-            "background": "#10b981", # Emerald 500
-            "color": "white", 
-            "border": "1px solid #059669", 
-            "width": 180,
-            "borderRadius": "8px",
-            "fontWeight": "bold"
-        }
+        "position": { "x": 400, "y": 300 },
+        "style": { "background": "#10b981", "color": "white", "border": "none", "borderRadius": "8px", "fontWeight": "bold", "width": 180 }
     })
 
-    # 2. Criar os Nós Satélites (Evidências) em círculo
-    import math
-    radius = 250
+    # Satélites
+    radius = 280
     total = len(entities)
-    
     for i, entity in enumerate(entities):
         if not entity: continue
-        
-        # Matemática para distribuir em círculo
         angle = (2 * math.pi * i) / total if total > 0 else 0
         x = 400 + radius * math.cos(angle)
         y = 300 + radius * math.sin(angle)
-
-        # Ícone baseado no tipo
+        
         etype = entity.get("type", "UNKNOWN")
-        icon = "📄"
-        if etype == "CPF": icon = "👤"
-        elif etype == "EMAIL": icon = "📧"
-        elif etype == "PHONE": icon = "📱"
-        elif etype == "IP": icon = "🌐"
-
         val = entity.get("value", "???")
+        
+        # --- DIFERENCIAÇÃO VISUAL ---
+        bg_color = "#1e293b" # Default Slate
+        border_color = "#475569"
+        icon = "📄"
+
+        if etype == "CPF": 
+            bg_color = "#4f46e5" # Indigo (Roxo Azulado)
+            border_color = "#6366f1"
+            icon = "👤"
+        elif etype == "PHONE": 
+            bg_color = "#d97706" # Amber (Laranja)
+            border_color = "#f59e0b"
+            icon = "📱"
+        elif etype == "EMAIL": 
+            bg_color = "#0891b2" # Cyan
+            border_color = "#22d3ee"
+            icon = "📧"
+        elif etype == "PLACA": 
+            bg_color = "#be123c" # Rose (Vermelho)
+            border_color = "#f43f5e"
+            icon = "🚗"
 
         nodes.append({
-            "id": f"ent_{i}", # ID único visual
+            "id": f"ent_{i}",
             "data": { "label": f"{icon} {etype}\n{val}" },
             "position": { "x": x, "y": y },
             "style": { 
-                "background": "#1e293b", # Slate 800
-                "color": "#e2e8f0", 
-                "border": "1px solid #475569",
-                "fontSize": "12px",
-                "width": 150
+                "background": bg_color, 
+                "color": "white", 
+                "border": f"1px solid {border_color}",
+                "fontSize": "11px",
+                "width": 160,
+                "borderRadius": "6px"
             }
         })
-
-        # Criar a linha (Edge)
         edges.append({
-            "id": f"e_{case_node['id']}-{i}",
-            "source": case_node["id"],
-            "target": f"ent_{i}",
-            "animated": True,
-            "style": { "stroke": "#10b981" }
+            "id": f"e_{i}", "source": case_node["id"], "target": f"ent_{i}",
+            "animated": True, "style": { "stroke": border_color }
         })
 
     return { "nodes": nodes, "edges": edges }
