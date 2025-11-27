@@ -13,14 +13,19 @@ app = FastAPI(
 )
 
 # -----------------------------------
-# Configuração de CORS (CRÍTICO PARA VERCEL)
+# Configuração de CORS (White-list)
 # -----------------------------------
-# Permitir todas as origens para garantir que o Vercel conecte
-origins = ["*"]
+# Precisamos listar EXPLICITAMENTE os domínios para permitir Credenciais
+origins = [
+    "http://localhost:3000",                       # Dev Local
+    "https://deltatrace-app.vercel.app",           # Frontend Vercel (Produção)
+    "https://deltatrace-backend.onrender.com",     # Próprio Backend
+    "https://deltatrace.com.br"                    # Seu site institucional (opcional)
+]
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=origins,
+    allow_origins=origins,  # Usa a lista específica, não "*"
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
