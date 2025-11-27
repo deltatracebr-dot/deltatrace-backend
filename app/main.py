@@ -13,15 +13,13 @@ app = FastAPI(
 )
 
 # -----------------------------------
-# Configuração de CORS (FIX FINAL - OPEN MODE)
+# Configuração de CORS (PERMISSIVE - FINAL)
 # -----------------------------------
-# Removemos allow_credentials=True para poder usar allow_origins=["*"]
-# Isso resolve 99% dos problemas de conexão em APIs públicas/híbridas.
-
+# Permitir tudo. Em produção real, restrinja para o domínio da Vercel.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],    # Aceita Vercel, Localhost, Postman, tudo.
-    allow_credentials=False,# Desativa verificação estrita de cookies
+    allow_origins=["*"],
+    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -31,10 +29,10 @@ app.add_middleware(
 # -----------------------------------
 @app.get("/health")
 def health():
-    return {"status": "online", "cors": "open_wildcard"}
+    return {"status": "online", "env": "production", "cors": "permissive"}
 
 # -----------------------------------
-# Rotas
+# Registro de Rotas
 # -----------------------------------
 app.include_router(auth_router, prefix="/auth", tags=["auth"])
 app.include_router(graph_router, prefix="/graph", tags=["graph"])
