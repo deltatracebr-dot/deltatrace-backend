@@ -1,23 +1,20 @@
 ﻿from fastapi import APIRouter, UploadFile, File, HTTPException
-from typing import List, Any
+from typing import List, Optional, Dict, Any
 from pydantic import BaseModel, Field, field_validator
 from . import service
+import json
 
 router = APIRouter()
 
-# --- MODELO BLINDADO COM VALIDATOR ---
 class CaseModel(BaseModel):
     id: str
     title: str = Field(default="Caso Sem Título")
     status: str = Field(default="Em andamento")
 
-    # O Segredo: 'mode=before' pega o valor ANTES da validação
-    # Se vier None do banco, ele troca pelo texto na marra.
     @field_validator('title', 'status', mode='before')
     @classmethod
     def set_default_if_none(cls, v: Any) -> str:
-        if v is None:
-            return "Não Informado"
+        if v is None: return "Não Informado"
         return str(v)
 
 class NewCaseInput(BaseModel):
@@ -25,13 +22,8 @@ class NewCaseInput(BaseModel):
 
 @router.get("/", response_model=List[CaseModel])
 def list_cases():
-    try:
-        # Busca os dados brutos
-        cases = service.get_all_cases()
-        return cases
-    except Exception as e:
-        print(f"Erro ao listar casos: {e}")
-        return []
+    try: return service.get_all_cases()
+    except: return []
 
 @router.post("/", response_model=CaseModel)
 def create_new_case(input: NewCaseInput):
@@ -41,10 +33,31 @@ def create_new_case(input: NewCaseInput):
 async def upload_evidence(case_id: str, file: UploadFile = File(...)):
     if not file.filename.lower().endswith(".pdf"):
         raise HTTPException(status_code=400, detail="Apenas PDF.")
-    
     content = await file.read()
+    try: return service.process_upload(case_id, content)
+    except Exception as e: raise HTTPException(status_code=500, detail=str(e))
+
+# --- ROTAS DE BACKUP ---
+
+@router.get("/{case_id}/backup")
+def backup_case(case_id: str):
+    data = service.export_case_data(case_id)
+    if not data:
+        raise HTTPException(status_code=404, detail="Caso não encontrado")
+    return data
+
+@router.post("/restore")
+async def restore_case(file: UploadFile = File(...)):
+    if not file.filename.endswith(".json"):
+        raise HTTPException(status_code=400, detail="Arquivo deve ser .json")
+    
     try:
-        return service.process_upload(case_id, content)
+        content = await file.read()
+        data = json.loads(content)
+        success = service.import_case_data(data)
+        if success:
+            return {"message": "Caso restaurado com sucesso!"}
+        else:
+            raise HTTPException(status_code=400, detail="JSON inválido ou corrompido")
     except Exception as e:
-        print(f"Upload error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=f"Erro ao restaurar: {str(e)}")

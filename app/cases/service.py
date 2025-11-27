@@ -91,3 +91,61 @@ def process_upload(case_id: str, file_bytes: bytes):
         """
         session.run(query, id=case_id, data=entities)
     return {"count": len(entities)}
+
+# --- BACKUP & RESTORE SYSTEM ---
+
+def export_case_data(case_id: str):
+    driver = get_driver()
+    if not driver: return None
+    
+    # Busca o caso e todas as evidências conectadas
+    query = """
+    MATCH (c:Case {id: $case_id})
+    OPTIONAL MATCH (c)-[:HAS_EVIDENCE]->(e:Entity)
+    RETURN c as case_data, collect(properties(e)) as entities
+    """
+    with driver.session() as session:
+        result = session.run(query, case_id=case_id).single()
+        if not result: return None
+        
+        # Formata para JSON limpo
+        case_node = dict(result["case_data"])
+        entities = result["entities"]
+        
+        return {
+            "version": "1.0",
+            "timestamp": datetime.now().isoformat(),
+            "case": case_node,
+            "entities": entities
+        }
+
+def import_case_data(data: dict):
+    driver = get_driver()
+    if not driver: return False
+    
+    case_info = data.get("case")
+    entities = data.get("entities", [])
+    
+    if not case_info or "id" not in case_info:
+        return False
+
+    # Query para recriar tudo (Idempotente - não duplica se já existir)
+    query = """
+    MERGE (c:Case {id: $case_id})
+    SET c.title = $title, c.status = $status, c.created_at = datetime($created_at)
+    
+    WITH c
+    UNWIND $entities as ent
+    MERGE (e:Entity {value: ent.value})
+    ON CREATE SET e.type = ent.type, e.created_at = datetime()
+    MERGE (c)-[:HAS_EVIDENCE]->(e)
+    """
+    
+    with driver.session() as session:
+        session.run(query, 
+                    case_id=case_info["id"], 
+                    title=case_info.get("title", "Backup Restaurado"), 
+                    status=case_info.get("status", "Em andamento"),
+                    created_at=case_info.get("created_at", datetime.now().isoformat()),
+                    entities=entities)
+    return True
