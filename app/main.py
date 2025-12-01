@@ -25,12 +25,12 @@ def startup_event():
 
 @app.get("/")
 def read_root():
-    return {"status": "DeltaTrace Intelligence Online", "version": "2.2 - Deep Graph"}
+    return {"status": "DeltaTrace Intelligence Online", "version": "2.3 - PathFix"}
 
 class NoteUpdate(BaseModel):
     note: str
 
-# --- ENGINE DO GRAFO (AGORA COM VISÃO PROFUNDA) ---
+# --- ENGINE DO GRAFO (MODO PATHFINDING) ---
 @app.get("/graph/case/{case_id}")
 def get_case_graph(case_id: str):
     driver = get_driver()
@@ -42,95 +42,92 @@ def get_case_graph(case_id: str):
     
     try:
         with driver.session() as session:
-            # QUERY NIVEL 2: Busca o Caso -> Vizinhos -> Vizinhos dos Vizinhos
+            # QUERY DE CAMINHO: Busca tudo que está conectado em até 2 saltos
+            # Isso GARANTE que as linhas venham junto com os nós
             result = session.run("""
-                MATCH (c:Case {id: $case_id})
-                OPTIONAL MATCH (c)-[r1]-(n)
-                OPTIONAL MATCH (n)-[r2]-(m)
-                RETURN c, r1, n, r2, m
+                MATCH path = (c:Case {id: $case_id})-[*1..2]-(n)
+                RETURN path
             """, case_id=case_id)
             
             seen_nodes = set()
             seen_edges = set()
+            has_records = False
             
             for record in result:
-                # 1. Nó Central (Caso)
-                if record["c"]:
-                    c = record["c"]
-                    cid = c.element_id if hasattr(c, "element_id") else str(c.id)
-                    if cid not in seen_nodes:
-                        seen_nodes.add(cid)
+                has_records = True
+                path = record["path"]
+                
+                # 1. Processar Nós do Caminho
+                for node in path.nodes:
+                    nid = node.element_id if hasattr(node, "element_id") else str(node.id)
+                    
+                    if nid not in seen_nodes:
+                        seen_nodes.add(nid)
+                        labels = list(node.labels)
+                        props = dict(node.items())
+                        
+                        # Definição de Label (Prioridade de Dados)
+                        label = props.get("label") or props.get("name") or props.get("number") or props.get("full_address") or props.get("title")
+                        
+                        # Filtro Anti-Lixo (Remove nós sem label útil)
+                        if not label or label in ["DADO", "DADO S/N", "null"]:
+                            continue 
+
+                        # Definição de Tipo
+                        ntype = "default"
+                        if "Person" in labels: ntype = "person"
+                        elif "Phone" in labels: ntype = "phone"
+                        elif "Address" in labels: ntype = "address"
+                        elif "Case" in labels: ntype = "case"
+                        elif "Document" in labels: ntype = "case" # Documento usa estilo de case por enquanto
+
                         nodes.append({
-                            "id": cid,
+                            "id": nid,
                             "type": "default",
-                            "data": { "label": f"CASO: {c.get('title', 'S/N')}", "type": "case", "full_data": dict(c.items()) },
+                            "data": { 
+                                "label": label, 
+                                "type": ntype, 
+                                "full_data": props, 
+                                "note": props.get("note", "") 
+                            },
                             "position": { "x": 0, "y": 0 }
                         })
 
-                # 2. Nível 1 (Vizinhos diretos: Documentos, Pessoas ligadas ao caso)
-                if record["n"]:
-                    process_node(record["n"], nodes, seen_nodes)
-                    if record["r1"]:
-                        process_edge(record["r1"], edges, seen_edges, record["c"], record["n"])
+                # 2. Processar Linhas (Arestas) do Caminho
+                for rel in path.relationships:
+                    rid = rel.element_id if hasattr(rel, "element_id") else str(rel.id)
+                    
+                    if rid not in seen_edges:
+                        seen_edges.add(rid)
+                        start = rel.start_node.element_id if hasattr(rel.start_node, "element_id") else str(rel.start_node.id)
+                        end = rel.end_node.element_id if hasattr(rel.end_node, "element_id") else str(rel.end_node.id)
+                        
+                        edges.append({
+                            "id": f"e_{rid}",
+                            "source": start,
+                            "target": end,
+                            "animated": True,
+                            "style": { "stroke": "#00FF85", "strokeWidth": 2, "strokeDasharray": "5 5" }
+                        })
 
-                # 3. Nível 2 (Vizinhos dos vizinhos: Telefones dentro dos Documentos)
-                if record["m"]:
-                    process_node(record["m"], nodes, seen_nodes)
-                    if record["r2"]:
-                        process_edge(record["r2"], edges, seen_edges, record["n"], record["m"])
+            # Fallback: Se não tiver conexões, mostra o nó central do Caso
+            if not has_records:
+                root = session.run("MATCH (c:Case {id: $case_id}) RETURN c", case_id=case_id).single()
+                if root:
+                    c = root["c"]
+                    cid = c.element_id if hasattr(c, "element_id") else str(c.id)
+                    nodes.append({
+                        "id": cid,
+                        "type": "input",
+                        "data": { "label": c.get("title", "Caso"), "type": "case" },
+                        "position": { "x": 0, "y": 0 }
+                    })
 
     except Exception as e:
         print(f"Erro grafo: {e}")
         return {"nodes": [], "edges": []}
 
     return {"nodes": nodes, "edges": edges}
-
-# --- FUNÇÕES AUXILIARES PARA LIMPAR O CÓDIGO ---
-def process_node(node_obj, nodes_list, seen_set):
-    nid = node_obj.element_id if hasattr(node_obj, "element_id") else str(node_obj.id)
-    if nid in seen_set: return
-    seen_set.add(nid)
-    
-    labels = list(node_obj.labels)
-    props = dict(node_obj.items())
-    
-    # Determinar Label
-    label = props.get("label") or props.get("name") or props.get("number") or props.get("full_address") or props.get("title") or "DADO"
-    
-    # Determinar Tipo (Cor)
-    ntype = "default"
-    if "Person" in labels: ntype = "person"
-    elif "Phone" in labels: ntype = "phone"
-    elif "Address" in labels: ntype = "address"
-    elif "Document" in labels: ntype = "document" # Novo tipo para ficar azul escuro/roxo
-    elif "Case" in labels: ntype = "case"
-
-    nodes_list.append({
-        "id": nid,
-        "type": "default",
-        "data": { "label": label, "type": ntype, "full_data": props, "note": props.get("note", "") },
-        "position": { "x": 0, "y": 0 }
-    })
-
-def process_edge(rel_obj, edges_list, seen_set, start_node, end_node):
-    # Identificar IDs de origem/destino da relação
-    # O driver Neo4j nem sempre retorna start/end na ordem visual, então usamos os IDs dos nós passados
-    sid = start_node.element_id if hasattr(start_node, "element_id") else str(start_node.id)
-    eid = end_node.element_id if hasattr(end_node, "element_id") else str(end_node.id)
-    
-    # A relação precisa conectar os dois nós que estamos processando
-    rid = rel_obj.element_id if hasattr(rel_obj, "element_id") else str(rel_obj.id)
-    
-    if rid in seen_set: return
-    seen_set.add(rid)
-
-    edges_list.append({
-        "id": f"e_{rid}",
-        "source": sid,
-        "target": eid,
-        "animated": True,
-        "style": { "stroke": "#00FF85", "strokeWidth": 1.5, "strokeDasharray": "5 5" }
-    })
 
 @app.get("/api/graph/case/{case_id}")
 def get_case_graph_api(case_id: str):
