@@ -5,7 +5,16 @@ from app.schemas import PhoneResult, AddressResult
 class Mind7Extractor:
     def __init__(self, raw_text: str, target_name: str):
         self.text = raw_text
-        self.target_name = target_name.upper() if target_name else "ALVO"
+        # Garante que target_name nunca seja None
+        self.target_name = target_name.upper() if target_name else "ALVO DESCONHECIDO"
+        
+        # --- LÓGICA DE SOBRENOMES (RESTAURADA) ---
+        ignore_words = ["DE", "DA", "DO", "DOS", "DAS", "E", "NETO", "JUNIOR", "FILHO", "SOBRINHO"]
+        self.target_surnames = [
+            n for n in self.target_name.split() 
+            if len(n) > 2 and n not in ignore_words
+        ]
+        
         print(f"--- DEBUG TEXTO PDF ({len(raw_text)} chars) ---\n{raw_text[:200]}...")
 
     def extract_phones(self) -> List[PhoneResult]:
@@ -45,8 +54,6 @@ class Mind7Extractor:
 
     def extract_addresses(self) -> List[AddressResult]:
         results = []
-        # REGEX V4: Aceita "R ", "R.", "AV " e ignora case
-        # Estrutura: (Prefixo) + (Nome da Rua) + (Número)
         addr_regex = r'\b((?:RUA|R\.|R|AV|AV\.|AVENIDA|ALAMEDA|TRAVESSA|RODOVIA|ESTRADA|PRACA)\s+[A-Z\s0-9]+?,?\s*\d+)'
         
         matches = re.findall(addr_regex, self.text, re.IGNORECASE)
@@ -55,18 +62,18 @@ class Mind7Extractor:
         processed = set()
         for m in matches:
             full = m.strip().upper()
-            # Filtra falsos positivos muito curtos (ex: "R 1")
             if full in processed or len(full) < 6: continue
             processed.add(full)
             
-            print(f"Processando Endereço: {full}") # Log para debug
+            # Análise de DNA familiar no endereço
+            is_family_hq = any(s in full for s in self.target_surnames)
             
             results.append(AddressResult(
                 raw_text="...",
                 source_pdf="MIND7_AUTO",
                 full_address=full,
                 associated_names=[],
-                is_family_hq=False,
+                is_family_hq=is_family_hq,
                 match_count=1
             ))
         return results
