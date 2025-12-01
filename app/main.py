@@ -44,7 +44,7 @@ app.include_router(cases_router, prefix="/cases", tags=["cases"])
 app.include_router(osint_router, prefix="/osint", tags=["osint"])
 
 # --- ROTA DE INGESTÃO DE INTELIGÊNCIA ---
-@app.post("/api/analyze/pdf", response_model=InvestigationReport)
+@app.post("/analyze/pdf", response_model=InvestigationReport)
 async def analyze_pdf_mind7(target_name: str = Form(...), file: UploadFile = File(...)):
     print(f"Recebendo arquivo: {file.filename} para alvo: {target_name}")
     
@@ -84,3 +84,4 @@ async def analyze_pdf_mind7(target_name: str = Form(...), file: UploadFile = Fil
         "phones": relevant_phones,
         "addresses": addresses
     }
+
