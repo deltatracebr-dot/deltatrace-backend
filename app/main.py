@@ -9,6 +9,7 @@ from app.database import verify_connection, get_driver
 
 app = FastAPI()
 
+# --- CONFIGURAÇÃO DE SEGURANÇA (CORS) ---
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -17,6 +18,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# --- ROTAS DE CASOS ---
 app.include_router(cases_routes.router, prefix="/cases", tags=["Cases"])
 
 @app.on_event("startup")
@@ -25,12 +27,13 @@ def startup_event():
 
 @app.get("/")
 def read_root():
-    return {"status": "DeltaTrace Intelligence Online", "version": "1.8 - Visual Restoration"}
+    return {"status": "DeltaTrace Intelligence Online", "version": "2.0 - Stable"}
 
+# --- SCHEMA DE NOTAS ---
 class NoteUpdate(BaseModel):
     note: str
 
-# --- ROTA DE GRAFOS (COM CLASSIFICAÇÃO RESTAURADA) ---
+# --- ROTA DE GRAFO (CORRIGIDA E DEFINITIVA) ---
 @app.get("/graph/case/{case_id}")
 def get_case_graph(case_id: str):
     driver = get_driver()
@@ -42,6 +45,7 @@ def get_case_graph(case_id: str):
     
     try:
         with driver.session() as session:
+            # Busca tudo conectado ao caso
             result = session.run("""
                 MATCH (c:Case {id: $case_id})-[r]-(n)
                 RETURN c, r, n
@@ -53,7 +57,7 @@ def get_case_graph(case_id: str):
             for record in result:
                 has_records = True
                 
-                # --- PROCESSAMENTO INTELIGENTE DO NÓ ---
+                # --- PROCESSAMENTO DO NÓ ---
                 node = record["n"]
                 node_id = node.element_id if hasattr(node, "element_id") else str(node.id)
                 
@@ -63,30 +67,38 @@ def get_case_graph(case_id: str):
                 labels = list(node.labels)
                 props = dict(node.items())
                 
-                # 1. Determinar o Tipo (Para a Cor)
+                # LÓGICA DE EXIBIÇÃO (PRIORIDADE PARA O VALOR REAL)
+                # Tenta encontrar o valor em várias propriedades comuns
+                real_value = props.get("label") or props.get("number") or props.get("full_address") or props.get("name") or props.get("title") or "DADO S/N"
+                
+                # Determinar Tipo para Cor
                 node_type = "default"
-                if "Person" in labels: node_type = "person"
-                elif "Phone" in labels: node_type = "phone"
-                elif "Address" in labels: node_type = "address"
-                elif "Case" in labels: node_type = "case"
-                
-                # 2. Determinar o Rótulo (Para o Texto)
-                # Tenta pegar o melhor nome possível
-                name = props.get("label") or props.get("name") or props.get("number") or props.get("full_address") or props.get("title") or "DADO BRUTO"
-                
+                if "Person" in labels: 
+                    node_type = "person"
+                    # Se for pessoa, garante que o nome aparece
+                    if props.get("name"): real_value = props.get("name")
+                elif "Phone" in labels: 
+                    node_type = "phone"
+                elif "Address" in labels: 
+                    node_type = "address"
+                elif "Case" in labels: 
+                    node_type = "case"
+                    real_value = f"CASO: {props.get('title', 'S/N')}"
+
+                # Monta o nó para o Frontend
                 nodes.append({
                     "id": node_id,
                     "type": "default", 
                     "data": { 
-                        "label": name, 
-                        "type": node_type, # <--- Isso diz ao front qual cor usar
+                        "label": real_value, # <--- AQUI ESTAVA O PROBLEMA, AGORA VAI O VALOR CERTO
+                        "type": node_type,
                         "full_data": props,
                         "note": props.get("note", "")
                     },
                     "position": { "x": 0, "y": 0 }
                 })
                 
-                # --- PROCESSAMENTO DA LINHA ---
+                # --- PROCESSAMENTO DA LINHA (EDGE) ---
                 rel = record["r"]
                 start = rel.start_node.element_id if hasattr(rel.start_node, "element_id") else str(rel.start_node.id)
                 end = rel.end_node.element_id if hasattr(rel.end_node, "element_id") else str(rel.end_node.id)
@@ -99,18 +111,16 @@ def get_case_graph(case_id: str):
                     "style": { "stroke": "#00FF85", "strokeWidth": 1.5, "strokeDasharray": "5 5" }
                 })
 
-            # Se estiver vazio, mostra o Caso central
+            # Se não tiver conexões, mostra pelo menos o Caso
             if not has_records:
-                root_result = session.run("MATCH (c:Case {id: $case_id}) RETURN c", case_id=case_id)
-                record = root_result.single()
-                if record:
-                    c = record["c"]
+                root = session.run("MATCH (c:Case {id: $case_id}) RETURN c", case_id=case_id).single()
+                if root:
+                    c = root["c"]
                     cid = c.element_id if hasattr(c, "element_id") else str(c.id)
-                    title = c.get("title", "Caso Sem Nome")
                     nodes.append({
                         "id": cid,
                         "type": "input",
-                        "data": { "label": f"📂 CASO\n{title}", "type": "case" },
+                        "data": { "label": c.get("title", "Caso"), "type": "case" },
                         "position": { "x": 0, "y": 0 }
                     })
 
@@ -120,17 +130,18 @@ def get_case_graph(case_id: str):
 
     return {"nodes": nodes, "edges": edges}
 
+# Rota Dupla para Proxy
 @app.get("/api/graph/case/{case_id}")
 def get_case_graph_api(case_id: str):
     return get_case_graph(case_id)
 
+# --- ROTA DE SALVAR NOTAS ---
 @app.post("/graph/node/{node_id}/note")
 def update_node_note(node_id: str, payload: NoteUpdate):
     driver = get_driver()
     with driver.session() as session:
         session.run("""
-            MATCH (n) 
-            WHERE elementId(n) = $id OR id(n) = toInteger($id)
+            MATCH (n) WHERE elementId(n) = $id OR id(n) = toInteger($id)
             SET n.note = $note
         """, id=node_id, note=payload.note)
     return {"status": "success"}
@@ -139,6 +150,7 @@ def update_node_note(node_id: str, payload: NoteUpdate):
 def update_node_note_api(node_id: str, payload: NoteUpdate):
     return update_node_note(node_id, payload)
 
+# --- MESA DE ANÁLISE (PDF) ---
 async def process_pdf_logic(target_name: str, file: UploadFile):
     text_content = ""
     try:
@@ -151,6 +163,7 @@ async def process_pdf_logic(target_name: str, file: UploadFile):
     extractor = Mind7Extractor(raw_text=text_content, target_name=target_name)
     phones = extractor.extract_phones()
     addresses = extractor.extract_addresses()
+    # Filtro de relevância
     relevant_phones = [p for p in phones if p.confidence_score > 30]
 
     return {
