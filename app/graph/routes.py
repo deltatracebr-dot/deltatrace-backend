@@ -1,4 +1,5 @@
-﻿from fastapi import APIRouter, HTTPException
+﻿from pydantic import BaseModel
+from fastapi import APIRouter, HTTPException
 from app.database import get_driver
 
 router = APIRouter()
@@ -48,3 +49,17 @@ def get_case_graph(case_id: str):
                     })
 
     return {"nodes": nodes, "edges": edges}
+
+class NoteUpdate(BaseModel):
+    note: str
+
+@router.post("/node/{node_id}/note")
+def update_node_note(node_id: str, payload: NoteUpdate):
+    driver = get_driver()
+    with driver.session() as session:
+        # Atualiza a propriedade 'note' do nó pelo ID
+        session.run("""
+            MATCH (n) WHERE elementId(n) = $id OR id(n) = $id
+            SET n.note = $note
+        """, id=node_id, note=payload.note)
+    return {"status": "success"}
