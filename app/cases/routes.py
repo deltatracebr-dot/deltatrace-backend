@@ -57,3 +57,10 @@ def run_osint_search(payload: SearchRequest):
     # O Backend faz o trabalho sujo de ir na web
     results = service.search_web_intelligence(payload.query)
     return results
+
+@router.post("/{case_id}/import_intel")
+def import_intelligence(case_id: str, payload: dict):
+    success = service.save_intelligence_to_case(case_id, payload)
+    if success:
+        return {"status": "success", "message": "Dados integrados ao grafo."}
+    raise HTTPException(status_code=500, detail="Erro ao salvar no Neo4j")

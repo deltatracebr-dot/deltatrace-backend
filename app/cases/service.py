@@ -116,3 +116,54 @@ def search_web_intelligence(query: str, limit: int = 5):
         return [{"title": "Erro na busca", "snippet": str(e), "link": "#"}]
     
     return results
+
+# --- PERSISTÊNCIA DE INTELIGÊNCIA (MIND-7 TO GRAPH) ---
+def save_intelligence_to_case(case_id: str, data: dict):
+    driver = get_driver()
+    if not driver: return False
+    
+    target_name = data.get("target", {}).get("name", "ALVO DESCONHECIDO")
+    phones = data.get("phones", [])
+    addresses = data.get("addresses", [])
+
+    with driver.session() as session:
+        # 1. Garantir que o Nó do Caso e do Alvo existam
+        session.run("""
+            MATCH (c:Case {id: $case_id})
+            MERGE (p:Person {name: $name})
+            MERGE (c)-[:INVESTIGATES]->(p)
+        """, case_id=case_id, name=target_name)
+
+        # 2. Salvar Telefones (Apenas Score > 40 para evitar lixo total)
+        for phone in phones:
+            if phone.get("confidence_score", 0) > 40:
+                session.run("""
+                    MATCH (p:Person {name: $target_name})
+                    MERGE (t:Phone {label: $number})
+                    ON CREATE SET t.type = 'PHONE', t.source = 'MIND7', t.owner = $owner
+                    MERGE (p)-[r:HAS_PHONE]->(t)
+                    SET r.confidence = $score, r.classification = $classif
+                """, 
+                target_name=target_name, 
+                number=phone["number"], 
+                owner=phone.get("registered_owner", "Desconhecido"),
+                score=phone["confidence_score"],
+                classif=phone["classification"]
+                )
+
+        # 3. Salvar Endereços
+        for addr in addresses:
+            session.run("""
+                MATCH (p:Person {name: $target_name})
+                MERGE (a:Address {label: $full_addr})
+                ON CREATE SET a.type = 'ADDRESS', a.is_hq = $is_hq
+                MERGE (p)-[r:LIVES_AT]->(a)
+                SET r.match_count = $matches
+            """, 
+            target_name=target_name, 
+            full_addr=addr["full_address"],
+            is_hq=addr["is_family_hq"],
+            matches=addr["match_count"]
+            )
+            
+    return True
