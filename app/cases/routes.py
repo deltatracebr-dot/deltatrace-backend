@@ -7,23 +7,20 @@ import datetime
 import pdfplumber
 from app.database import get_driver
 from app.services.extractor import Mind7Extractor
-from pydantic import BaseModel # <--- Importação movida para o topo
+from pydantic import BaseModel
 
 router = APIRouter()
 
-# --- DIRETÓRIO TEMPORÁRIO ---
 UPLOAD_DIR = "/tmp" 
 if not os.path.exists(UPLOAD_DIR):
     os.makedirs(UPLOAD_DIR)
 
-# --- MODELOS (Agora a importação já aconteceu) ---
 class Case(BaseModel):
     id: str
     title: str
     status: str
     created_at: str
 
-# --- ROTAS DE LISTAGEM E CRIAÇÃO ---
 @router.get("/")
 def list_cases():
     driver = get_driver()
@@ -59,18 +56,17 @@ def delete_case(case_id: str):
         session.run("MATCH (c:Case {id: $id}) DETACH DELETE c", id=case_id)
     return {"status": "deleted"}
 
-# --- LÓGICA DE UPLOAD + PROCESSAMENTO ---
+# --- LÓGICA DE UPLOAD V2 (COM NÓ DE DOCUMENTO) ---
 async def process_upload_logic(case_id: str, file: UploadFile):
     driver = get_driver()
-    print(f"--> Processando Upload para Caso: {case_id}")
+    print(f"--> Processando Upload: {file.filename}")
     
     file_path = f"{UPLOAD_DIR}/{case_id}_{file.filename}"
     try:
         with open(file_path, "wb") as buffer:
             shutil.copyfileobj(file.file, buffer)
-    except Exception as e:
-        print(f"Erro ao salvar arquivo: {e}")
-        return {"status": "error", "detail": "Falha ao salvar arquivo no servidor"}
+    except:
+        return {"status": "error", "detail": "Falha IO"}
     
     text_content = ""
     try:
@@ -79,7 +75,7 @@ async def process_upload_logic(case_id: str, file: UploadFile):
                 text = page.extract_text()
                 if text: text_content += text + "\n"
     except Exception as e:
-        print(f"Erro ao ler PDF: {e}")
+        print(f"Erro PDF: {e}")
     
     target_name = "ALVO"
     with driver.session() as session:
@@ -91,37 +87,54 @@ async def process_upload_logic(case_id: str, file: UploadFile):
     addresses = extractor.extract_addresses()
     
     count = 0
+    doc_id = f"doc_{uuid.uuid4().hex[:8]}"
+    
     with driver.session() as session:
+        # 1. CRIAR NÓ DO DOCUMENTO (EVIDÊNCIA)
+        # Isso garante que você VEJA que o arquivo subiu
         session.run("""
             MATCH (c:Case {id: $cid})
-            MERGE (p:Person {name: $name})
-            MERGE (c)-[:INVESTIGATES]->(p)
-        """, cid=case_id, name=target_name)
+            MERGE (d:Document {id: $doc_id})
+            ON CREATE SET d.label = $filename, d.type = 'evidence', d.created_at = $date
+            MERGE (c)-[:CONTAINS_EVIDENCE]->(d)
+        """, cid=case_id, doc_id=doc_id, filename=file.filename, date=str(datetime.datetime.now()))
 
+        # 2. Ligar Telefones ao Documento E ao Alvo
         for p in phones:
             if p.confidence_score > 30:
                 session.run("""
-                    MATCH (p:Person {name: $name})
+                    MATCH (d:Document {id: $doc_id})
+                    MATCH (c:Case {id: $cid})
+                    MERGE (p:Person {name: $name})
+                    MERGE (c)-[:INVESTIGATES]->(p)
+                    
                     MERGE (t:Phone {label: $num})
                     ON CREATE SET t.type = 'phone', t.owner = $owner
+                    
+                    MERGE (d)-[:SOURCE_OF]->(t)
                     MERGE (p)-[:HAS_PHONE]->(t)
-                """, name=target_name, num=p.number, owner=p.registered_owner)
+                """, doc_id=doc_id, cid=case_id, name=target_name, num=p.number, owner=p.registered_owner)
                 count += 1
         
+        # 3. Ligar Endereços ao Documento E ao Alvo
         for a in addresses:
             session.run("""
-                MATCH (p:Person {name: $name})
+                MATCH (d:Document {id: $doc_id})
+                MATCH (c:Case {id: $cid})
+                MERGE (p:Person {name: $name})
+                
                 MERGE (addr:Address {label: $full})
                 ON CREATE SET addr.type = 'address'
+                
+                MERGE (d)-[:SOURCE_OF]->(addr)
                 MERGE (p)-[:LIVES_AT]->(addr)
-            """, name=target_name, full=a.full_address)
+            """, doc_id=doc_id, cid=case_id, name=target_name, full=a.full_address)
             count += 1
 
-    try:
-        os.remove(file_path)
+    try: os.remove(file_path)
     except: pass
 
-    return {"status": "processed", "count": count, "detail": f"Processado com sucesso. {count} novas conexões."}
+    return {"status": "processed", "count": count, "detail": f"Evidência processada."}
 
 @router.post("/{case_id}/upload")
 async def upload_evidence_no_slash(case_id: str, file: UploadFile = File(...)):
