@@ -182,3 +182,4 @@ def download_case_report(case_id: str):
 def download_case_report_api(case_id: str):
     return download_case_report(case_id)
 
+
