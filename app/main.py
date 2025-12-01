@@ -181,3 +181,4 @@ def download_case_report(case_id: str):
 @app.get("/api/report/{case_id}")
 def download_case_report_api(case_id: str):
     return download_case_report(case_id)
+
