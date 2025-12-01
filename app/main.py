@@ -9,7 +9,6 @@ from app.database import verify_connection, get_driver
 
 app = FastAPI()
 
-# --- CONFIGURAÇÃO DE SEGURANÇA (CORS) ---
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -18,7 +17,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# --- ROTAS DE CASOS ---
 app.include_router(cases_routes.router, prefix="/cases", tags=["Cases"])
 
 @app.on_event("startup")
@@ -27,13 +25,11 @@ def startup_event():
 
 @app.get("/")
 def read_root():
-    return {"status": "DeltaTrace Intelligence Online", "version": "2.0 - Stable"}
+    return {"status": "DeltaTrace Intelligence Online", "version": "1.9 - Edge Fix"}
 
-# --- SCHEMA DE NOTAS ---
 class NoteUpdate(BaseModel):
     note: str
 
-# --- ROTA DE GRAFO (CORRIGIDA E DEFINITIVA) ---
 @app.get("/graph/case/{case_id}")
 def get_case_graph(case_id: str):
     driver = get_driver()
@@ -45,10 +41,10 @@ def get_case_graph(case_id: str):
     
     try:
         with driver.session() as session:
-            # Busca tudo conectado ao caso
+            # QUERY MELHORADA: Retorna IDs explícitos das arestas
             result = session.run("""
                 MATCH (c:Case {id: $case_id})-[r]-(n)
-                RETURN c, r, n
+                RETURN c, n, r, elementId(c) as source_id, elementId(n) as target_id
             """, case_id=case_id)
             
             seen_nodes = set()
@@ -57,66 +53,63 @@ def get_case_graph(case_id: str):
             for record in result:
                 has_records = True
                 
-                # --- PROCESSAMENTO DO NÓ ---
+                # 1. Nó (Target)
                 node = record["n"]
-                node_id = node.element_id if hasattr(node, "element_id") else str(node.id)
+                node_id = record["target_id"] # ID direto do banco
                 
-                if node_id in seen_nodes: continue
-                seen_nodes.add(node_id)
+                if node_id not in seen_nodes:
+                    seen_nodes.add(node_id)
+                    labels = list(node.labels)
+                    props = dict(node.items())
+                    
+                    real_value = props.get("label") or props.get("number") or props.get("full_address") or props.get("name") or props.get("title") or "DADO S/N"
+                    
+                    node_type = "default"
+                    if "Person" in labels: 
+                        node_type = "person"
+                        if props.get("name"): real_value = props.get("name")
+                    elif "Phone" in labels: node_type = "phone"
+                    elif "Address" in labels: node_type = "address"
+                    
+                    nodes.append({
+                        "id": node_id,
+                        "type": "default", 
+                        "data": { 
+                            "label": real_value, 
+                            "type": node_type,
+                            "full_data": props,
+                            "note": props.get("note", "")
+                        },
+                        "position": { "x": 0, "y": 0 }
+                    })
+                
+                # 2. Nó Central (Case)
+                case_node = record["c"]
+                case_id_db = record["source_id"] # ID direto do banco
+                
+                if case_id_db not in seen_nodes:
+                    seen_nodes.add(case_id_db)
+                    nodes.append({
+                        "id": case_id_db,
+                        "data": { "label": f"CASO: {case_node.get('title')}", "type": "case" },
+                        "position": { "x": 0, "y": 0 }
+                    })
 
-                labels = list(node.labels)
-                props = dict(node.items())
-                
-                # LÓGICA DE EXIBIÇÃO (PRIORIDADE PARA O VALOR REAL)
-                # Tenta encontrar o valor em várias propriedades comuns
-                real_value = props.get("label") or props.get("number") or props.get("full_address") or props.get("name") or props.get("title") or "DADO S/N"
-                
-                # Determinar Tipo para Cor
-                node_type = "default"
-                if "Person" in labels: 
-                    node_type = "person"
-                    # Se for pessoa, garante que o nome aparece
-                    if props.get("name"): real_value = props.get("name")
-                elif "Phone" in labels: 
-                    node_type = "phone"
-                elif "Address" in labels: 
-                    node_type = "address"
-                elif "Case" in labels: 
-                    node_type = "case"
-                    real_value = f"CASO: {props.get('title', 'S/N')}"
-
-                # Monta o nó para o Frontend
-                nodes.append({
-                    "id": node_id,
-                    "type": "default", 
-                    "data": { 
-                        "label": real_value, # <--- AQUI ESTAVA O PROBLEMA, AGORA VAI O VALOR CERTO
-                        "type": node_type,
-                        "full_data": props,
-                        "note": props.get("note", "")
-                    },
-                    "position": { "x": 0, "y": 0 }
-                })
-                
-                # --- PROCESSAMENTO DA LINHA (EDGE) ---
-                rel = record["r"]
-                start = rel.start_node.element_id if hasattr(rel.start_node, "element_id") else str(rel.start_node.id)
-                end = rel.end_node.element_id if hasattr(rel.end_node, "element_id") else str(rel.end_node.id)
-                
+                # 3. Aresta (Edge)
+                # IMPORTANTE: Usamos os IDs capturados na query para garantir o match
                 edges.append({
-                    "id": f"e{start}-{end}",
-                    "source": start,
-                    "target": end,
+                    "id": f"e{case_id_db}-{node_id}",
+                    "source": case_id_db,
+                    "target": node_id,
                     "animated": True,
-                    "style": { "stroke": "#00FF85", "strokeWidth": 1.5, "strokeDasharray": "5 5" }
+                    "style": { "stroke": "#00FF85", "strokeWidth": 2 }
                 })
 
-            # Se não tiver conexões, mostra pelo menos o Caso
             if not has_records:
-                root = session.run("MATCH (c:Case {id: $case_id}) RETURN c", case_id=case_id).single()
+                root = session.run("MATCH (c:Case {id: $case_id}) RETURN c, elementId(c) as id", case_id=case_id).single()
                 if root:
+                    cid = root["id"]
                     c = root["c"]
-                    cid = c.element_id if hasattr(c, "element_id") else str(c.id)
                     nodes.append({
                         "id": cid,
                         "type": "input",
@@ -130,12 +123,10 @@ def get_case_graph(case_id: str):
 
     return {"nodes": nodes, "edges": edges}
 
-# Rota Dupla para Proxy
 @app.get("/api/graph/case/{case_id}")
 def get_case_graph_api(case_id: str):
     return get_case_graph(case_id)
 
-# --- ROTA DE SALVAR NOTAS ---
 @app.post("/graph/node/{node_id}/note")
 def update_node_note(node_id: str, payload: NoteUpdate):
     driver = get_driver()
@@ -150,7 +141,6 @@ def update_node_note(node_id: str, payload: NoteUpdate):
 def update_node_note_api(node_id: str, payload: NoteUpdate):
     return update_node_note(node_id, payload)
 
-# --- MESA DE ANÁLISE (PDF) ---
 async def process_pdf_logic(target_name: str, file: UploadFile):
     text_content = ""
     try:
@@ -163,7 +153,6 @@ async def process_pdf_logic(target_name: str, file: UploadFile):
     extractor = Mind7Extractor(raw_text=text_content, target_name=target_name)
     phones = extractor.extract_phones()
     addresses = extractor.extract_addresses()
-    # Filtro de relevância
     relevant_phones = [p for p in phones if p.confidence_score > 30]
 
     return {
