@@ -3,12 +3,12 @@ from fastapi.middleware.cors import CORSMiddleware
 import pdfplumber
 from app.services.extractor import Mind7Extractor
 from app.schemas import InvestigationReport
-from app.cases import routes as cases_routes  # IMPORTANTE: Importar rotas de casos
+from app.cases import routes as cases_routes
+from app.graph import routes as graph_routes  # <--- IMPORTANTE: Adicionando Grafos
 from app.database import verify_connection
 
 app = FastAPI()
 
-# CORS
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -17,9 +17,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# --- INCLUIR ROTAS DE CASOS ---
-# Isso resolve o problema de não criar casos e do erro 404 em /cases
+# --- ROTAS ---
 app.include_router(cases_routes.router, prefix="/cases", tags=["Cases"])
+app.include_router(graph_routes.router, prefix="/graph", tags=["Graph"]) # <--- ATIVANDO ROTA
 
 @app.on_event("startup")
 def startup_event():
@@ -27,9 +27,9 @@ def startup_event():
 
 @app.get("/")
 def read_root():
-    return {"status": "DeltaTrace Intelligence Online", "version": "1.3"}
+    return {"status": "DeltaTrace Intelligence Online", "version": "1.4"}
 
-# --- LÓGICA DE PROCESSAMENTO DE PDF ---
+# --- LÓGICA DE PROCESSAMENTO ---
 async def process_pdf_logic(target_name: str, file: UploadFile):
     print(f"--> Recebendo arquivo: {file.filename} para alvo: {target_name}")
     text_content = ""
@@ -47,7 +47,6 @@ async def process_pdf_logic(target_name: str, file: UploadFile):
     phones = extractor.extract_phones()
     addresses = extractor.extract_addresses()
     
-    # Filtro de relevância básico
     relevant_phones = [p for p in phones if p.confidence_score > 30]
 
     return {
@@ -62,7 +61,7 @@ async def process_pdf_logic(target_name: str, file: UploadFile):
         "addresses": addresses
     }
 
-# --- ROTAS DE ANÁLISE (DUPLAS) ---
+# --- ROTAS DE ANÁLISE ---
 @app.post("/analyze/pdf", response_model=InvestigationReport)
 async def analyze_pdf_root(target_name: str = Form(...), file: UploadFile = File(...)):
     return await process_pdf_logic(target_name, file)
