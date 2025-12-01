@@ -1,6 +1,6 @@
 ﻿from fastapi import FastAPI, UploadFile, File, Form, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel # <--- Importante
+from pydantic import BaseModel
 import pdfplumber
 from app.services.extractor import Mind7Extractor
 from app.schemas import InvestigationReport
@@ -25,13 +25,12 @@ def startup_event():
 
 @app.get("/")
 def read_root():
-    return {"status": "DeltaTrace Intelligence Online", "version": "1.7 - Notes Enabled"}
+    return {"status": "DeltaTrace Intelligence Online", "version": "1.8 - Visual Restoration"}
 
-# --- SCHEMA PARA NOTAS ---
 class NoteUpdate(BaseModel):
     note: str
 
-# --- ROTA DE GRAFOS (LEITURA) ---
+# --- ROTA DE GRAFOS (COM CLASSIFICAÇÃO RESTAURADA) ---
 @app.get("/graph/case/{case_id}")
 def get_case_graph(case_id: str):
     driver = get_driver()
@@ -53,6 +52,8 @@ def get_case_graph(case_id: str):
             
             for record in result:
                 has_records = True
+                
+                # --- PROCESSAMENTO INTELIGENTE DO NÓ ---
                 node = record["n"]
                 node_id = node.element_id if hasattr(node, "element_id") else str(node.id)
                 
@@ -60,22 +61,32 @@ def get_case_graph(case_id: str):
                 seen_nodes.add(node_id)
 
                 labels = list(node.labels)
-                main_label = labels[0] if labels else "Unknown"
                 props = dict(node.items())
-                name = props.get("label") or props.get("name") or props.get("title") or "Sem Nome"
+                
+                # 1. Determinar o Tipo (Para a Cor)
+                node_type = "default"
+                if "Person" in labels: node_type = "person"
+                elif "Phone" in labels: node_type = "phone"
+                elif "Address" in labels: node_type = "address"
+                elif "Case" in labels: node_type = "case"
+                
+                # 2. Determinar o Rótulo (Para o Texto)
+                # Tenta pegar o melhor nome possível
+                name = props.get("label") or props.get("name") or props.get("number") or props.get("full_address") or props.get("title") or "DADO BRUTO"
                 
                 nodes.append({
                     "id": node_id,
                     "type": "default", 
                     "data": { 
-                        "label": f"{main_label}\n{name}", 
-                        "type": "default", # Simplificado, o front trata
+                        "label": name, 
+                        "type": node_type, # <--- Isso diz ao front qual cor usar
                         "full_data": props,
-                        "note": props.get("note", "") # <--- Carrega a nota existente
+                        "note": props.get("note", "")
                     },
                     "position": { "x": 0, "y": 0 }
                 })
                 
+                # --- PROCESSAMENTO DA LINHA ---
                 rel = record["r"]
                 start = rel.start_node.element_id if hasattr(rel.start_node, "element_id") else str(rel.start_node.id)
                 end = rel.end_node.element_id if hasattr(rel.end_node, "element_id") else str(rel.end_node.id)
@@ -85,9 +96,10 @@ def get_case_graph(case_id: str):
                     "source": start,
                     "target": end,
                     "animated": True,
-                    "style": { "stroke": "#00FF85", "strokeWidth": 2 }
+                    "style": { "stroke": "#00FF85", "strokeWidth": 1.5, "strokeDasharray": "5 5" }
                 })
 
+            # Se estiver vazio, mostra o Caso central
             if not has_records:
                 root_result = session.run("MATCH (c:Case {id: $case_id}) RETURN c", case_id=case_id)
                 record = root_result.single()
@@ -112,13 +124,10 @@ def get_case_graph(case_id: str):
 def get_case_graph_api(case_id: str):
     return get_case_graph(case_id)
 
-# --- ROTA DE SALVAR NOTAS (NOVA) ---
 @app.post("/graph/node/{node_id}/note")
 def update_node_note(node_id: str, payload: NoteUpdate):
-    print(f"Salvando nota no nó {node_id}: {payload.note}")
     driver = get_driver()
     with driver.session() as session:
-        # Tenta pelo ID novo (elementId) ou ID antigo (integer)
         session.run("""
             MATCH (n) 
             WHERE elementId(n) = $id OR id(n) = toInteger($id)
@@ -130,7 +139,6 @@ def update_node_note(node_id: str, payload: NoteUpdate):
 def update_node_note_api(node_id: str, payload: NoteUpdate):
     return update_node_note(node_id, payload)
 
-# --- ROTAS DE PDF ---
 async def process_pdf_logic(target_name: str, file: UploadFile):
     text_content = ""
     try:
