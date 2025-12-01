@@ -1,25 +1,12 @@
-﻿import pdfplumber
-from fastapi import UploadFile, File, Form
+﻿from fastapi import FastAPI, UploadFile, File, Form
+from fastapi.middleware.cors import CORSMiddleware
+import pdfplumber
 from app.services.extractor import Mind7Extractor
 from app.schemas import InvestigationReport, PersonResult
-from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
 
-# Imports dos Routers
-from app.auth.routes import router as auth_router
-from app.graph_engine.routes import router as graph_router
-from app.cases.routes import router as cases_router
-from app.core_osint.routes import router as osint_router
+app = FastAPI()
 
-app = FastAPI(
-    title="DeltaTrace OSINT Core",
-    version="1.0.0",
-)
-
-# -----------------------------------
-# Configuração de CORS (PERMISSIVE - FINAL)
-# -----------------------------------
-# Permitir tudo. Em produção real, restrinja para o domínio da Vercel.
+# Configuração de CORS (Permitir tudo para evitar bloqueios do Frontend)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -28,27 +15,15 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# -----------------------------------
-# Healthcheck
-# -----------------------------------
-@app.get("/health")
-def health():
-    return {"status": "online", "env": "production", "cors": "permissive"}
+# --- ROTA DE HEALTCHECK (Para saber se está vivo) ---
+@app.get("/")
+def read_root():
+    return {"status": "DeltaTrace Intelligence Online", "version": "1.2"}
 
-# -----------------------------------
-# Registro de Rotas
-# -----------------------------------
-app.include_router(auth_router, prefix="/auth", tags=["auth"])
-app.include_router(graph_router, prefix="/graph", tags=["graph"])
-app.include_router(cases_router, prefix="/cases", tags=["cases"])
-app.include_router(osint_router, prefix="/osint", tags=["osint"])
-
-# --- ROTA DE INGESTÃO DE INTELIGÊNCIA ---
-@app.post("/analyze/pdf", response_model=InvestigationReport)
-async def analyze_pdf_mind7(target_name: str = Form(...), file: UploadFile = File(...)):
-    print(f"Recebendo arquivo: {file.filename} para alvo: {target_name}")
+# --- LÓGICA DE PROCESSAMENTO (Isolada) ---
+async def process_pdf_logic(target_name: str, file: UploadFile):
+    print(f"--> Recebendo arquivo: {file.filename} para alvo: {target_name}")
     
-    # 1. Ler o PDF na memória
     text_content = ""
     try:
         with pdfplumber.open(file.file) as pdf:
@@ -57,31 +32,39 @@ async def analyze_pdf_mind7(target_name: str = Form(...), file: UploadFile = Fil
                 if extracted:
                     text_content += extracted + "\n"
     except Exception as e:
-        print(f"Erro ao ler PDF: {e}")
-        # Retorna vazio em caso de erro fatal de leitura, mas não quebra
+        print(f"Erro Crítico ao ler PDF: {e}")
         text_content = ""
 
-    # 2. Instanciar o Extrator
+    # Instanciar Extrator
     extractor = Mind7Extractor(raw_text=text_content, target_name=target_name)
 
-    # 3. Rodar os Módulos de Inteligência
+    # Rodar Módulos
     phones = extractor.extract_phones()
     addresses = extractor.extract_addresses()
 
-    # 4. Filtrar resultados (Curadoria Automática básica)
-    # Ex: Telefones com score > 30
+    # Filtro de Relevância (Score > 30)
     relevant_phones = [p for p in phones if p.confidence_score > 30]
 
-    # 5. Montar resposta estruturada
     return {
         "target": {
             "name": target_name,
-            "cpf": "EM BREVE", # Implementar extrator de CPF depois
+            "cpf": "PENDING",
             "surnames": extractor.target_surnames,
-            "raw_text": "Processado via DeltaTrace Engine",
+            "raw_text": "Processado com Sucesso",
             "source_pdf": file.filename
         },
         "phones": relevant_phones,
         "addresses": addresses
     }
+
+# --- ROTAS DUPLAS (Aceita com ou sem /api) ---
+# Isso resolve o problema do Proxy de uma vez por todas.
+
+@app.post("/analyze/pdf", response_model=InvestigationReport)
+async def analyze_pdf_root(target_name: str = Form(...), file: UploadFile = File(...)):
+    return await process_pdf_logic(target_name, file)
+
+@app.post("/api/analyze/pdf", response_model=InvestigationReport)
+async def analyze_pdf_api(target_name: str = Form(...), file: UploadFile = File(...)):
+    return await process_pdf_logic(target_name, file)
 
