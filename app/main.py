@@ -1,4 +1,6 @@
-﻿from fastapi import FastAPI, UploadFile, File, Form, HTTPException
+﻿from fastapi.responses import StreamingResponse
+from app.services.report_generator import generate_pdf_report
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import pdfplumber
@@ -165,3 +167,17 @@ async def analyze_pdf_root(target_name: str = Form(...), file: UploadFile = File
 @app.post("/api/analyze/pdf", response_model=InvestigationReport)
 async def analyze_pdf_api(target_name: str = Form(...), file: UploadFile = File(...)):
     return await process_pdf_logic(target_name, file)
+
+# --- ROTA DE RELATÓRIO PDF ---
+@app.get("/report/{case_id}")
+def download_case_report(case_id: str):
+    pdf_buffer = generate_pdf_report(case_id)
+    return StreamingResponse(
+        pdf_buffer, 
+        media_type="application/pdf", 
+        headers={"Content-Disposition": f"attachment; filename=Dossie_{case_id}.pdf"}
+    )
+
+@app.get("/api/report/{case_id}")
+def download_case_report_api(case_id: str):
+    return download_case_report(case_id)
