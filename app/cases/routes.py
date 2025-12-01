@@ -143,3 +143,46 @@ async def upload_evidence_no_slash(case_id: str, file: UploadFile = File(...)):
 @router.post("/{case_id}/upload/")
 async def upload_evidence_slash(case_id: str, file: UploadFile = File(...)):
     return await process_upload_logic(case_id, file)
+
+# --- ROTA DE LIMPEZA DE DADOS (GARBAGE COLLECTOR) ---
+@router.post("/{case_id}/clean")
+def clean_case_data(case_id: str):
+    driver = get_driver()
+    if not driver:
+        raise HTTPException(status_code=500, detail="Banco desconectado")
+        
+    deleted_count = 0
+    with driver.session() as session:
+        # 1. Remover Telefones Inválidos (Zeros, curtos, placeholders)
+        # Regex busca sequencias de zeros ou numeros muito curtos
+        q1 = session.run("""
+            MATCH (n:Phone)
+            WHERE n.label CONTAINS '000000' 
+               OR size(n.label) < 8 
+               OR n.label CONTAINS 'N/I'
+            DETACH DELETE n
+            RETURN count(n) as c
+        """)
+        deleted_count += q1.single()["c"]
+
+        # 2. Remover Endereços Inválidos (N/I, muito curtos)
+        q2 = session.run("""
+            MATCH (n:Address)
+            WHERE size(n.label) < 5 
+               OR n.label CONTAINS 'N/I' 
+               OR n.label = 'ENDEREÇO'
+            DETACH DELETE n
+            RETURN count(n) as c
+        """)
+        deleted_count += q2.single()["c"]
+        
+        # 3. Remover Nós Genéricos sem Dados (DADO S/N que não foi corrigido)
+        q3 = session.run("""
+            MATCH (n)
+            WHERE n.label IN ['DADO S/N', 'DADO BRUTO', 'Unknown', 'N/A']
+            DETACH DELETE n
+            RETURN count(n) as c
+        """)
+        deleted_count += q3.single()["c"]
+
+    return {"status": "cleaned", "deleted_nodes": deleted_count, "message": f"Limpeza concluída. {deleted_count} nós removidos."}
