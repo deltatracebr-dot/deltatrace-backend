@@ -15,114 +15,62 @@ class Mind7Extractor:
     def extract_phones(self) -> List[PhoneResult]:
         results = []
         
-        # Regex melhorado: Exige DDD (XX) ou formato explícito para evitar CPFs
-        # Formatos aceitos: (11) 99999-9999, 11 99999 9999, 11999999999
-        # O segredo é validar se parece mesmo um telefone
-        
-        # Captura sequencias de 10 ou 11 digitos
-        candidates = re.findall(r'\b\d{10,11}\b', self.text)
-        
-        # Adiciona também formatos com formatação (xx) xxxx-xxxx
-        formatted_candidates = re.findall(r'\(?\d{2}\)?\s?9?\d{4}[-\s]?\d{4}', self.text)
-        
-        all_phones = list(set(candidates + formatted_candidates))
+        # Regex V3: Telefones + PLACAS (Novo!)
+        phone_regex = r'(\(?\d{2}\)?\s?9?\d{4}[-\s]?\d{4})'
+        placa_regex = r'\b([A-Z]{3}[0-9][0-9A-Z][0-9]{2})\b' # Padrão Mercosul e Antigo
 
-        for phone in all_phones:
-            # LIMPEZA: Remove caracteres não numéricos para análise
-            clean_num = re.sub(r'\D', '', phone)
-            
-            # FILTRO ANTI-CPF:
-            # Se começa com 0, 1, 2, 3, 4, 5, 6, 7, 8 (comuns em CPF) e tem 11 dígitos, 
-            # e NÃO tem formatação de telefone perto, é arriscado.
-            # Telefones móveis BR começam com DDD + 9.
-            
-            # Regra simples: Se tem 11 dígitos, o terceiro dígito DEVE ser 9 (Celular)
-            if len(clean_num) == 11 and clean_num[2] != '9':
-                continue # Provável CPF ou número fixo formatado errado, ignorar
-                
-            # Regra Anti-Fixo antigo confundido com data:
-            if len(clean_num) == 8: continue 
+        # 1. Telefones
+        found_phones = re.findall(phone_regex, self.text)
+        for phone in list(set(found_phones)):
+            clean = re.sub(r'\D', '', phone)
+            if len(clean) == 11 and clean[2] != '9': continue 
+            if len(clean) == 8: continue 
 
-            # Busca contexto no texto original
-            escaped_phone = re.escape(phone)
-            context_match = re.search(f".{{0,100}}{escaped_phone}.{{0,150}}", self.text, re.DOTALL)
-            
-            block = context_match.group(0).upper() if context_match else ""
-            
-            # CLASSIFICAÇÃO
-            classification = "Investigar"
-            score = 50
-            owner = "TERCEIRO / NÃO IDENTIFICADO"
-
-            if self.target_name in block:
-                classification = "Pessoal/Confirmado"
-                score = 100
-                owner = self.target_name
-            elif "MÃE" in block or "PAI" in block:
-                classification = "Vínculo Familiar"
-                score = 70
-                owner = "FAMILIAR"
-            
             results.append(PhoneResult(
-                raw_text=block[:100] + "...", 
+                raw_text="...", 
                 source_pdf="MIND7_AUTO",
                 number=phone,
-                registered_owner=owner,
-                classification=classification,
-                confidence_score=score
+                registered_owner="TERCEIRO",
+                classification="Investigar",
+                confidence_score=50
+            ))
+
+        # 2. Placas (Truque: Salvamos como "PhoneResult" mas com tipo especial no futuro)
+        # O backend atual não tem "VehicleResult", então vamos improvisar para não quebrar o sistema agora.
+        # No futuro criamos um schema próprio.
+        found_placas = re.findall(placa_regex, self.text)
+        for placa in list(set(found_placas)):
+            results.append(PhoneResult(
+                raw_text="VEICULO DETECTADO", 
+                source_pdf="MIND7_AUTO",
+                number=f"PLACA {placa}", # Prefixo para identificar
+                registered_owner="VEICULO",
+                classification="Veículo Vinculado",
+                confidence_score=90
             ))
             
         return results
 
     def extract_addresses(self) -> List[AddressResult]:
         results = []
-        
-        # Regex V2: Mais permissivo. Aceita endereço sem vírgula.
-        # Procura: (RUA/AV) + (TEXTO) + (NÚMERO)
         addr_regex = r'((?:RUA|AV|AVENIDA|ALAMEDA|TRAVESSA|RODOVIA|ESTRADA|PRACA)\s+[A-Z\s0-9]+?\s+\d+)'
-        
         matches = re.finditer(addr_regex, self.text, re.IGNORECASE)
         processed_addrs = []
 
         for match in matches:
             full_address = match.group(1).strip().upper()
-            
-            # Filtra falsos positivos pequenos (ex: "RUA 1")
-            if len(full_address) < 8: continue
-            
-            if full_address in processed_addrs: continue
+            if len(full_address) < 8 or full_address in processed_addrs: continue
             processed_addrs.append(full_address)
 
-            # Contexto para buscar nomes
-            start = match.start()
-            end = match.end()
-            block = self.text[max(0, start - 300):min(len(self.text), end + 300)].upper()
-
-            # Extrai nomes possíveis
-            blacklist = ["REGISTRO PRINCIPAL", "DATA DE VINCULO", "ENDERECO VINCULADO", "TELEFONE MÓVEL", "BAIRRO:", "CIDADE/UF:", "NÚMERO:", "CEP:"]
-            found_names_raw = re.findall(r'\b[A-Z]{3,}\s[A-Z]{3,}\s[A-Z\s]{3,}\b', block)
-            
-            unique_names = []
-            for n in set(found_names_raw):
-                n = n.strip()
-                if not any(b in n for b in blacklist) and len(n.split()) >= 2:
-                    unique_names.append(n)
-
-            # DNA Familiar
-            matches_count = 0
-            for name in unique_names:
-                hits = sum(1 for surname in self.target_surnames if surname in name)
-                if hits >= 1: matches_count += 1
-            
-            is_family_hq = matches_count >= 2
+            is_family_hq = any(s in full_address for s in self.target_surnames) # Lógica simplificada
             
             results.append(AddressResult(
                 raw_text="...",
                 source_pdf="MIND7_AUTO",
                 full_address=full_address,
-                associated_names=unique_names,
+                associated_names=[],
                 is_family_hq=is_family_hq,
-                match_count=matches_count
+                match_count=1
             ))
 
         return results
