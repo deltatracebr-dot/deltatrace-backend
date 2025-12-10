@@ -1,13 +1,18 @@
-﻿from fastapi.responses import StreamingResponse
-from app.services.report_generator import generate_pdf_report
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException
+﻿from fastapi import FastAPI, UploadFile, File, Form, HTTPException
+from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import pdfplumber
-from app.services.extractor import Mind7Extractor
-from app.schemas import InvestigationReport
+
+# Imports do Sistema DeltaTrace
+from app.cases import intake_routes
 from app.cases import routes as cases_routes
+from app.services.report_generator import generate_pdf_report
+from app.services.extractor import Mind7Extractor
 from app.database import verify_connection, get_driver
+
+# Imports Essenciais para Validar o Contrato (MIND-7)
+from app.schemas import InvestigationReport, PersonResult, PhoneResult, AddressResult
 
 app = FastAPI()
 
@@ -19,7 +24,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-app.include_router(cases_routes.router, prefix="/cases", tags=["Cases"])
+# Rotas
+app.include_router(cases_routes.router, tags=["Cases"])
+app.include_router(intake_routes.router)
 
 @app.on_event("startup")
 def startup_event():
@@ -27,7 +34,7 @@ def startup_event():
 
 @app.get("/")
 def read_root():
-    return {"status": "DeltaTrace Intelligence Online", "version": "2.3 - PathFix"}
+    return {"status": "DeltaTrace Intelligence Online", "version": "2.4 - Architect Fix"}
 
 class NoteUpdate(BaseModel):
     note: str
@@ -44,8 +51,6 @@ def get_case_graph(case_id: str):
     
     try:
         with driver.session() as session:
-            # QUERY DE CAMINHO: Busca tudo que está conectado em até 2 saltos
-            # Isso GARANTE que as linhas venham junto com os nós
             result = session.run("""
                 MATCH path = (c:Case {id: $case_id})-[*1..2]-(n)
                 RETURN path
@@ -59,7 +64,6 @@ def get_case_graph(case_id: str):
                 has_records = True
                 path = record["path"]
                 
-                # 1. Processar Nós do Caminho
                 for node in path.nodes:
                     nid = node.element_id if hasattr(node, "element_id") else str(node.id)
                     
@@ -68,20 +72,17 @@ def get_case_graph(case_id: str):
                         labels = list(node.labels)
                         props = dict(node.items())
                         
-                        # Definição de Label (Prioridade de Dados)
                         label = props.get("label") or props.get("name") or props.get("number") or props.get("full_address") or props.get("title")
                         
-                        # Filtro Anti-Lixo (Remove nós sem label útil)
                         if not label or label in ["DADO", "DADO S/N", "null"]:
                             continue 
 
-                        # Definição de Tipo
                         ntype = "default"
                         if "Person" in labels: ntype = "person"
                         elif "Phone" in labels: ntype = "phone"
                         elif "Address" in labels: ntype = "address"
                         elif "Case" in labels: ntype = "case"
-                        elif "Document" in labels: ntype = "case" # Documento usa estilo de case por enquanto
+                        elif "Document" in labels: ntype = "case"
 
                         nodes.append({
                             "id": nid,
@@ -95,7 +96,6 @@ def get_case_graph(case_id: str):
                             "position": { "x": 0, "y": 0 }
                         })
 
-                # 2. Processar Linhas (Arestas) do Caminho
                 for rel in path.relationships:
                     rid = rel.element_id if hasattr(rel, "element_id") else str(rel.id)
                     
@@ -112,7 +112,6 @@ def get_case_graph(case_id: str):
                             "style": { "stroke": "#00FF85", "strokeWidth": 2, "strokeDasharray": "5 5" }
                         })
 
-            # Fallback: Se não tiver conexões, mostra o nó central do Caso
             if not has_records:
                 root = session.run("MATCH (c:Case {id: $case_id}) RETURN c", case_id=case_id).single()
                 if root:
@@ -146,19 +145,55 @@ def update_node_note(node_id: str, payload: NoteUpdate):
 def update_node_note_api(node_id: str, payload: NoteUpdate):
     return update_node_note(node_id, payload)
 
-async def process_pdf_logic(target_name: str, file: UploadFile):
+# --- LÓGICA DE PROCESSAMENTO DE PDF (CORRIGIDA E ROBUSTA) ---
+async def process_pdf_logic(target_name: str, file: UploadFile) -> InvestigationReport:
+    print(f"--> [MIND-7] Iniciando análise para: {target_name}")
     text_content = ""
+    
+    # 1. Extração de Texto (Segura)
     try:
-        with pdfplumber.open(file.file) as pdf:
+        # Reposiciona ponteiro do arquivo se necessário
+        await file.seek(0)
+        # Lê os bytes para o pdfplumber
+        file_bytes = await file.read()
+        
+        # Uso do pdfplumber com bytes (workaround usando BytesIO se necessário, mas tentando direto)
+        import io
+        with pdfplumber.open(io.BytesIO(file_bytes)) as pdf:
             for page in pdf.pages:
                 t = page.extract_text()
                 if t: text_content += t + "\n"
-    except: pass
+    except Exception as e:
+        print(f"--> [ERRO LEITURA PDF] {e}")
+        text_content = "Erro ao ler conteúdo do PDF."
+
+    # 2. Inteligência (Extractor)
     extractor = Mind7Extractor(raw_text=text_content, target_name=target_name)
     phones = extractor.extract_phones()
     addresses = extractor.extract_addresses()
+    
+    # Filtro de Confiança
     relevant_phones = [p for p in phones if p.confidence_score > 30]
-    return {"target": {"name": target_name}, "phones": relevant_phones, "addresses": addresses}
+
+    # 3. CONSTRUÇÃO DO CONTRATO RIGOROSO (A CORREÇÃO PRINCIPAL)
+    # Precisamos criar objetos Pydantic explicitamente para evitar erros de validação
+    
+    target_obj = PersonResult(
+        raw_text=text_content[:2000], # Limita tamanho para não estourar payload se for gigante
+        source_pdf=file.filename or "upload.pdf",
+        name=target_name.upper(),
+        cpf="Não identificado", # Default seguro
+        surnames=[]
+    )
+
+    report = InvestigationReport(
+        target=target_obj,
+        phones=relevant_phones,
+        addresses=addresses
+    )
+    
+    print("--> [MIND-7] Relatório gerado com sucesso.")
+    return report
 
 @app.post("/analyze/pdf", response_model=InvestigationReport)
 async def analyze_pdf_root(target_name: str = Form(...), file: UploadFile = File(...)):
@@ -181,6 +216,3 @@ def download_case_report(case_id: str):
 @app.get("/api/report/{case_id}")
 def download_case_report_api(case_id: str):
     return download_case_report(case_id)
-
-
-
