@@ -1,0 +1,447 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="UTF-8">
+    <title>Dossier Delta Trace - {{ identificacao.nome }}</title>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Courier+Prime:wght@400;700&family=Roboto:wght@400;500;700&display=swap');
+
+        body {
+            font-family: 'Roboto', sans-serif;
+            margin: 0;
+            padding: 40px;
+            color: #333;
+            background-color: #fff;
+            max-width: 210mm;
+            margin: auto;
+        }
+
+        .header {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            border-bottom: 2px solid #228B22;
+            padding-bottom: 15px;
+            margin-bottom: 20px;
+        }
+        .header-left h1 {
+            font-size: 22px;
+            margin: 0;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+        .header-left h2 {
+            font-size: 12px;
+            color: #228B22;
+            margin: 4px 0 0 0;
+            font-weight: bold;
+        }
+        .header-right {
+            text-align: right;
+            font-family: 'Courier Prime', monospace;
+            font-size: 10px;
+            color: #555;
+            line-height: 1.4;
+        }
+
+        .score-section {
+            display: flex;
+            gap: 15px;
+            margin-bottom: 25px;
+        }
+        .score-card {
+            flex: 1;
+            border: 1px solid #ddd;
+            padding: 15px;
+            background: #fdfdfd;
+            border-radius: 4px;
+            text-align: center;
+        }
+        .score-val {
+            font-size: 28px;
+            font-weight: bold;
+            color: #B22222;
+        }
+        .score-label {
+            font-size: 10px;
+            text-transform: uppercase;
+            color: #666;
+            margin-bottom: 5px;
+        }
+        .risk-badge {
+            background: #B22222;
+            color: #fff;
+            padding: 2px 8px;
+            font-size: 10px;
+            border-radius: 3px;
+            font-weight: bold;
+            display: inline-block;
+        }
+
+        .section-title {
+            background-color: #f4f4f4;
+            padding: 6px 12px;
+            font-weight: bold;
+            font-size: 12px;
+            margin-top: 20px;
+            margin-bottom: 10px;
+            border-left: 4px solid #228B22;
+            text-transform: uppercase;
+            display: flex;
+            justify-content: space-between;
+        }
+
+        .data-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 8px;
+            margin-bottom: 10px;
+        }
+        .data-row {
+            display: flex;
+            border-bottom: 1px dotted #ccc;
+            padding-bottom: 2px;
+            font-size: 11px;
+        }
+        .label {
+            width: 150px;
+            font-weight: bold;
+            color: #444;
+            text-transform: uppercase;
+        }
+        .value {
+            font-family: 'Courier Prime', monospace;
+            color: #000;
+            flex: 1;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 10px;
+            font-family: 'Courier Prime', monospace;
+            margin-bottom: 15px;
+        }
+        th {
+            background-color: #e8e8e8;
+            padding: 6px;
+            text-align: left;
+            border: 1px solid #ccc;
+            font-weight: bold;
+            color: #333;
+        }
+        td {
+            border: 1px solid #ddd;
+            padding: 6px;
+        }
+
+        .red-flag { color: #B22222; font-weight: bold; }
+        .green-flag { color: #228B22; font-weight: bold; }
+
+        .mosaic-box {
+            border: 1px dashed #999;
+            padding: 10px;
+            font-size: 10px;
+            background: #fffcf5;
+            line-height: 1.4;
+            margin-bottom: 15px;
+        }
+
+        .footer {
+            margin-top: 30px;
+            border-top: 1px solid #eee;
+            padding-top: 10px;
+            text-align: center;
+            font-size: 9px;
+            color: #aaa;
+        }
+
+        .page-break { page-break-before: always; }
+
+        @media print {
+            body { padding: 0; }
+        }
+    </style>
+</head>
+<body>
+
+    <!-- CABEÇALHO -->
+    <div class="header">
+        <div class="header-left">
+            <h1>DOSSIER ANALÍTICO – PESSOA FÍSICA</h1>
+            <h2>DELTA DATA INTELLIGENCE</h2>
+        </div>
+        <div class="header-right">
+            Data: {{ meta.data }}<br>
+            Protocolo: {{ meta.protocolo }}<br>
+            Solicitante: {{ meta.solicitante }}<br>
+            Ref: CPF {{ meta.ref_cpf }}
+        </div>
+    </div>
+
+    <!-- SCORE -->
+    <div class="score-section">
+        <div class="score-card">
+            <div class="score-label">SCORE CSB8 (MERCADO)</div>
+            <div class="score-val">{{ scores.csb8_valor }}</div>
+            <div class="risk-badge">{{ scores.csb8_label }}</div>
+        </div>
+        <div class="score-card">
+            <div class="score-label">SCORE CSBA (BEHAVIOUR)</div>
+            <div class="score-val" style="color: darkred;">{{ scores.csba_valor }}</div>
+            <div class="risk-badge">{{ scores.csba_label }}</div>
+        </div>
+        <div class="score-card">
+            <div class="score-label">RENDA / CLASSE SOCIAL</div>
+            <div class="score-val" style="color:#333; font-size: 20px;">{{ scores.renda_label }}</div>
+            <span style="font-size: 9px;">{{ scores.renda_obs }}</span>
+        </div>
+    </div>
+
+    <!-- 1. IDENTIFICAÇÃO -->
+    <div class="section-title">
+        <span>1. IDENTIFICAÇÃO BÁSICA</span>
+    </div>
+    <div class="data-grid">
+        <div class="data-row"><span class="label">Nome Completo</span><span class="value">{{ identificacao.nome }}</span></div>
+        <div class="data-row"><span class="label">CPF</span><span class="value">{{ identificacao.cpf_formatado }}</span></div>
+        <div class="data-row"><span class="label">Data Nasc.</span><span class="value">{{ identificacao.data_nasc }}</span></div>
+        <div class="data-row"><span class="label">Sexo</span><span class="value">{{ identificacao.sexo }}</span></div>
+        <div class="data-row"><span class="label">Estado Civil</span><span class="value">{{ identificacao.estado_civil }}</span></div>
+        <div class="data-row"><span class="label">Nome da Mãe</span><span class="value">{{ identificacao.mae }}</span></div>
+        <div class="data-row"><span class="label">Nome do Pai</span><span class="value">{{ identificacao.pai }}</span></div>
+        <div class="data-row"><span class="label">Nacionalidade</span><span class="value">{{ identificacao.nacionalidade }}</span></div>
+        <div class="data-row"><span class="label">Profissão</span><span class="value">{{ identificacao.profissao }}</span></div>
+        <div class="data-row"><span class="label">Renda Declarada</span><span class="value">{{ identificacao.renda_declarada }}</span></div>
+        <div class="data-row"><span class="label">E-mail cadastral</span><span class="value">{{ identificacao.email_cadastral }}</span></div>
+        <div class="data-row"><span class="label">Data Atualização</span><span class="value">{{ identificacao.data_atualizacao }}</span></div>
+        <div class="data-row"><span class="label">Código Controle</span><span class="value">{{ identificacao.codigo_controle }}</span></div>
+    </div>
+
+    <!-- 2. RECEITA FEDERAL -->
+    <div class="section-title">
+        <span>2. RECEITA FEDERAL</span>
+    </div>
+    <div class="data-grid">
+        <div class="data-row"><span class="label">Nome RF</span><span class="value">{{ rf.nome }}</span></div>
+        <div class="data-row"><span class="label">CPF RF</span><span class="value">{{ rf.cpf }}</span></div>
+        <div class="data-row"><span class="label">Título Eleitor</span><span class="value">{{ rf.titulo }}</span></div>
+        <div class="data-row"><span class="label">Situação Cadastral</span><span class="value green-flag">{{ rf.situacao }}</span></div>
+        <div class="data-row"><span class="label">Residente Exterior</span><span class="value">{{ rf.residente_exterior }}</span></div>
+        <div class="data-row"><span class="label">Nacionalidade</span><span class="value">{{ rf.nacionalidade }}</span></div>
+        <div class="data-row"><span class="label">Endereço RF</span><span class="value">{{ rf.endereco }}</span></div>
+        <div class="data-row"><span class="label">Telefone RF</span><span class="value">{{ rf.telefone }}</span></div>
+        <div class="data-row"><span class="label">Atualização RF</span><span class="value">{{ rf.atualizacao }}</span></div>
+        <div class="data-row"><span class="label">Log Nome</span><span class="value">{{ rf.log_nome }}</span></div>
+    </div>
+
+    <!-- 3. ESCOLARIDADE / PROFISSÕES / RAIS -->
+    <div class="section-title">
+        <span>3. ESCOLARIDADE, HISTÓRICO PROFISSIONAL E RAIS</span>
+    </div>
+    <div class="data-row">
+        <span class="label">Escolaridade</span>
+        <span class="value">{{ escolaridade }}</span>
+    </div>
+    <br>
+    <table>
+        <thead>
+            <tr>
+                <th>PROFISSÃO / CARGO</th>
+                <th>DATA INCLUSÃO</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for p in profissoes %}
+            <tr>
+                <td>{{ p.cargo }}</td>
+                <td>{{ p.data }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    <div class="data-row">
+        <span class="label">RAIS</span>
+        <span class="value">{{ rais }}</span>
+    </div>
+
+    <!-- 4. TELEFONES -->
+    <div class="section-title">
+        <span>4. TELEFONES & HISTÓRICO DE OPERADORAS</span>
+    </div>
+    <div style="font-size:11px; font-weight:bold; margin-bottom:5px;">TELEFONES VINCULADOS</div>
+    <table>
+        <thead>
+            <tr>
+                <th>NÚMERO</th>
+                <th>ÚLTIMA ATUALIZAÇÃO</th>
+                <th>PRIORIDADE</th>
+                <th>OBSERVAÇÃO</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for t in telefones %}
+            <tr>
+                <td>{{ t.numero }}</td>
+                <td>{{ t.atualizacao }}</td>
+                <td>{{ t.prioridade }}</td>
+                <td>{{ t.obs }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+
+    <div style="font-size:11px; font-weight:bold; margin-bottom:5px;">HISTÓRICO DE OPERADORAS (ANATEL)</div>
+    <table>
+        <thead>
+            <tr>
+                <th>TELEFONE</th>
+                <th>DATA</th>
+                <th>OPERADORA (ORIGEM)</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for o in operadoras %}
+            <tr>
+                <td>{{ o.telefone }}</td>
+                <td>{{ o.data }}</td>
+                <td>{{ o.operadora }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+
+    <!-- 5. E-MAILS (SIMPLIFICADO) -->
+    <div class="section-title">
+        <span>5. E-MAILS VINCULADOS</span>
+    </div>
+    {% for em in emails %}
+    <div class="data-row">
+        <span class="label">E-mail</span>
+        <span class="value">{{ em.email }} • {{ em.data }}</span>
+    </div>
+    {% endfor %}
+
+    <!-- 6. ENDEREÇOS (SEM STATUS) -->
+    <div class="section-title">
+        <span>6. ENDEREÇOS VINCULADOS</span>
+    </div>
+    <table>
+        <thead>
+            <tr>
+                <th>TIPO</th>
+                <th>ENDEREÇO</th>
+                <th>CIDADE / UF</th>
+                <th>CEP</th>
+                <th>ATUALIZAÇÃO</th>
+                <th>PRIORIDADE</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for e in enderecos %}
+            <tr>
+                <td>{{ e.tipo }}</td>
+                <td>{{ e.endereco }}</td>
+                <td>{{ e.cidade_uf }}</td>
+                <td>{{ e.cep }}</td>
+                <td>{{ e.atualizacao }}</td>
+                <td>{{ e.prioridade }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+
+    <div class="page-break"></div>
+
+    <!-- PÁGINA 2 -->
+    <div class="header">
+        <div class="header-left">
+            <h1>DOSSIER ANALÍTICO – PESSOA FÍSICA</h1>
+            <h2>DELTA DATA INTELLIGENCE</h2>
+        </div>
+        <div class="header-right">
+            Página 2/2<br>
+            Ref: CPF {{ meta.ref_cpf }}
+        </div>
+    </div>
+
+    <!-- 7. PARENTES -->
+    <div class="section-title">
+        <span>7. ÁRVORE GENEALÓGICA (VÍNCULOS FAMILIARES)</span>
+    </div>
+    <table>
+        <thead>
+            <tr>
+                <th>VÍNCULO</th>
+                <th>NOME</th>
+                <th>CPF</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for p in parentes %}
+            <tr>
+                <td>{{ p.vinculo }}</td>
+                <td>{{ p.nome }}</td>
+                <td>{{ p.cpf }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+
+    <!-- 8. PERFIL SOCIOECONÔMICO -->
+    <div class="section-title">
+        <span>8. PERFIL SOCIOECONÔMICO & INFORMAÇÃO DE CRÉDITO</span>
+    </div>
+    <div class="data-grid">
+        <div class="data-row"><span class="label">Classe Social</span><span class="value">{{ perfil_socio.classe_social }}</span></div>
+        <div class="data-row"><span class="label">Renda Modelada</span><span class="value">{{ perfil_socio.renda_modelada }}</span></div>
+        <div class="data-row"><span class="label">Poder Aquisitivo</span><span class="value">{{ perfil_socio.poder_aquisitivo }}</span></div>
+        <div class="data-row"><span class="label">Target de Renda</span><span class="value">{{ perfil_socio.target_renda }}</span></div>
+        <div class="data-row"><span class="label">Risco de Crédito</span><span class="value red-flag">{{ perfil_socio.risco_credito }}</span></div>
+    </div>
+
+    <!-- 9. MOSAIC -->
+    <div class="section-title">
+        <span>9. ANÁLISE COMPORTAMENTAL (MOSAIC)</span>
+    </div>
+    <div class="mosaic-box">
+        <strong>Segmento Crédito:</strong><br>
+        {{ mosaic.segmento_credito }}<br><br>
+        <strong>Segmento Target:</strong><br>
+        {{ mosaic.segmento_target }}
+    </div>
+
+    <!-- 10. DOCUMENTOS & IRPF -->
+    <div class="section-title">
+        <span>10. DOCUMENTOS & IRPF</span>
+    </div>
+    <div class="data-grid">
+        <div class="data-row"><span class="label">PIS</span><span class="value">{{ docs.pis }}</span></div>
+        <div class="data-row"><span class="label">NIS</span><span class="value">{{ docs.nis }}</span></div>
+        <div class="data-row"><span class="label">RG</span><span class="value">{{ docs.rg }}</span></div>
+        <div class="data-row"><span class="label">Imposto de Renda</span><span class="value">{{ docs.irpf }}</span></div>
+    </div>
+
+    <!-- 11. CREDIT ANALYTICS -->
+    <div class="section-title">
+        <span>11. CREDIT ANALYTICS (FLAGS RESUMIDAS)</span>
+    </div>
+    <div style="font-size: 10px; color:#555; margin-bottom:8px;">
+        Indicadores comportamentais e de consumo extraídos de bases de crédito.
+        INTERESSES detalhados não são exibidos nesta versão do relatório.
+    </div>
+    <div class="data-grid">
+        <div class="data-row"><span class="label">Data Atualização</span><span class="value">{{ credit_flags.data_atualizacao }}</span></div>
+        <div class="data-row"><span class="label">Finalidade</span><span class="value">{{ credit_flags.finalidade }}</span></div>
+        <div class="data-row"><span class="label">Perfil Mobile</span><span class="value">{{ credit_flags.perfil_mobile }}</span></div>
+        <div class="data-row"><span class="label">Cliente Premium</span><span class="value green-flag">{{ credit_flags.cliente_premium }}</span></div>
+        <div class="data-row"><span class="label">Perfil Luxo</span><span class="value green-flag">{{ credit_flags.perfil_luxo }}</span></div>
+    </div>
+
+    <div class="footer">
+        Gerado por Delta Trace Technologies – Plataforma de Inteligência de Dados e OSINT – Uso Confidencial<br>
+        Este relatório consolida informações públicas e de bureaus parceiros. Não utilizar como única fonte para decisão de crédito.
+    </div>
+
+</body>
+</html>

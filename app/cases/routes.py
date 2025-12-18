@@ -10,8 +10,9 @@ from app.services.extractor import Mind7Extractor
 from pydantic import BaseModel
 
 # ========== CONFIGURAÇÃO DO ROUTER ==========
-# prefix="/cases" AQUI + redirect_slashes=False para evitar 307
-router = APIRouter(prefix="/cases", redirect_slashes=False)
+# ALTERADO: Removido prefix="/cases" pois já é injetado no main.py
+# Mantido redirect_slashes=False para evitar redirecionamentos 307 indesejados
+router = APIRouter(redirect_slashes=False)
 
 UPLOAD_DIR = "/tmp" 
 if not os.path.exists(UPLOAD_DIR):
@@ -32,7 +33,13 @@ def list_cases():
     cases = []
     if not driver: return []
     with driver.session() as session:
-        result = session.run("MATCH (c:Case) RETURN c ORDER BY c.created_at DESC")
+        # ALTERADO: Adicionado WHERE para filtrar status 'Excluído' (Soft Delete filter)
+        result = session.run("""
+            MATCH (c:Case) 
+            WHERE coalesce(c.status, '') <> 'Excluído' 
+            RETURN c 
+            ORDER BY c.created_at DESC
+        """)
         for record in result:
             node = record["c"]
             cases.append({
@@ -186,11 +193,15 @@ def clean_case_data(case_id: str):
 @router.delete("/{case_id}")
 @router.delete("/{case_id}/")
 def delete_case(case_id: str):
-    """Exclui um caso (para botão Excluir)"""
+    """Exclusão DEFINITIVA do caso (Hard Delete)"""
     driver = get_driver()
     with driver.session() as session:
-        session.run("MATCH (c:Case {id: $id}) DETACH DELETE c", id=case_id)
-    return {"status": "deleted"}
+        session.run("""
+            MATCH (c:Case {id: $id})
+            OPTIONAL MATCH (c)-[*]->(n)
+            DETACH DELETE c, n
+        """, id=case_id)
+    return {"status": "deleted_permanently", "id": case_id}
 
 @router.get("/{case_id}/export")
 @router.get("/{case_id}/export/")
@@ -274,7 +285,7 @@ def get_case_actions(case_id: str):
                 "method": "DELETE",
                 "url": f"/cases/{case_id}",
                 "label": "🗑️ Excluir Caso",
-                "description": "Remove permanentemente o caso e todos os dados relacionados",
+                "description": "Remove o caso da listagem (Soft Delete)",
                 "danger": True
             },
             {
