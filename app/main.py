@@ -69,17 +69,19 @@ except ImportError:
 app = FastAPI(title="DeltaTrace Intelligence - All-Source Engine")
 
 # ==========================================
-# CONFIGURAÇÃO DE CORS
+# CONFIGURAÇÃO DE CORS (ATUALIZADA)
 # ==========================================
 origins = [
     "http://localhost:3000",
     "http://127.0.0.1:3000",
-    "https://deltatrace-app.vercel.app",  # ADICIONADO: Permite acesso da Vercel
+    "https://deltatrace-app.vercel.app",      # Antigo
+    "https://deltatrace-frontend.vercel.app", # NOVO (Onde seu site está agora)
+    "*"                                         # Permite tudo (Para garantir que funcione agora)
 ]
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=origins,
+    allow_origins=["*"], # Forçando permissão total temporariamente para eliminar erros
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
